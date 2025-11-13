@@ -49,7 +49,6 @@
             Enter a domain to attempt fetching its <code class="bg-gray-100 p-1 rounded">sitemap.xml</code> or paste the XML content directly.
         </p>
 
-        <!-- Input Section -->
         <div class="space-y-4 mb-8">
             <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
                 <input type="text" id="domainInput" placeholder="Enter domain (e.g., hon.com)" value="hon.com"
@@ -61,13 +60,18 @@
             </div>
             <textarea id="xmlContent" rows="8" placeholder="... or paste the full sitemap.xml content here if automatic fetch fails due to CORS (recommended for external sites)."
                       class="w-full p-4 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary"></textarea>
-            <button id="parseButton" onclick="parseSitemap()"
-                    class="w-full bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-green-700 transition duration-150">
-                Parse XML Content
-            </button>
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                 <button id="parseButton" onclick="parseSitemap()"
+                        class="w-full sm:w-2/3 bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-green-700 transition duration-150">
+                    Parse XML Content
+                </button>
+                 <button id="exportButton" onclick="exportHierarchy()" disabled
+                        class="w-full sm:w-1/3 bg-gray-400 text-white font-semibold py-3 px-6 rounded-lg shadow-lg transition duration-150 disabled:opacity-50 disabled:cursor-not-allowed hover:bg-gray-500">
+                    Export to HTML
+                </button>
+            </div>
         </div>
 
-        <!-- Status and Output -->
         <div id="statusMessage" class="mb-4 p-3 rounded-lg text-sm text-center hidden"></div>
 
         <div id="hierarchyOutput" class="border border-gray-200 rounded-lg p-4 bg-white min-h-[100px] shadow-inner">
@@ -78,7 +82,6 @@
         </div>
     </div>
 
-    <!-- Modal for Messages -->
     <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center hidden z-50">
         <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
             <h3 id="modalTitle" class="text-xl font-bold mb-3 text-primary">Warning</h3>
@@ -95,7 +98,10 @@
         const pageTree = document.getElementById('pageTree');
         const xmlContentArea = document.getElementById('xmlContent');
         const domainInput = document.getElementById('domainInput');
-        
+        const exportButton = document.getElementById('exportButton');
+
+        let parsedTreeData = null; // Variable to store the parsed tree data for export
+
         // --- Modal Handlers ---
         const modal = document.getElementById('modal');
         const modalTitle = document.getElementById('modalTitle');
@@ -123,6 +129,7 @@
             const url = `https://${domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}/sitemap.xml`;
             
             setStatus('Attempting to fetch sitemap...', 'bg-yellow-100 text-yellow-800');
+            exportButton.disabled = true;
             
             try {
                 const response = await fetch(url);
@@ -151,6 +158,7 @@
             }
 
             setStatus('Parsing XML and generating hierarchy...', 'bg-blue-100 text-blue-800');
+            exportButton.disabled = true;
             
             try {
                 // 1. Parse XML to get URL list
@@ -166,15 +174,18 @@
 
                 // 2. Build the URL Tree
                 const tree = buildHierarchyTree(urls);
+                parsedTreeData = tree; // Store the tree data
 
                 // 3. Render the Tree
                 renderTree(tree);
 
                 setStatus(`Successfully parsed ${urls.length} URLs and generated the hierarchy.`, 'bg-green-100 text-green-800');
+                exportButton.disabled = false;
             } catch (error) {
                 console.error("Parsing Error:", error);
                 setStatus('Error during parsing.', 'bg-red-100 text-red-800');
                 showModal('Parsing Error', `Could not parse the XML content: ${error.message}`, 'text-red-600');
+                parsedTreeData = null;
             }
         }
 
@@ -326,6 +337,99 @@
             nodeElement.appendChild(childrenContainer);
 
             return nodeElement;
+        }
+
+        // --- Export Logic ---
+
+        function buildExportHtml(tree) {
+            const domain = domainInput.value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '') || 'Site Hierarchy';
+            
+            let listHtml = '';
+
+            function generateList(node, level) {
+                let nodeName = node.name === '/' ? 'Home (Root)' : node.name;
+                
+                // Use a standard UL/LI structure for the export
+                listHtml += `<li><strong style="margin-right: 10px;">${nodeName}</strong>`;
+                listHtml += `<a href="${node.fullPath}" target="_blank" style="color: #1D4ED8; text-decoration: none;">(${node.fullPath})</a>`;
+                listHtml += `<span style="color: #6B7280; margin-left: 10px;">[${node.count} subpages]</span>`;
+
+                if (node.children && node.children.length > 0) {
+                    listHtml += `<ul style="margin-left: 20px; margin-top: 5px; padding-left: 0;">`;
+                    node.children.forEach(child => {
+                        generateList(child, level + 1);
+                    });
+                    listHtml += `</ul>`;
+                }
+                listHtml += `</li>`;
+            }
+
+            // Create a fake root node for the domain name display in the export
+            const exportRoot = {
+                name: domain,
+                children: tree.children,
+                fullPath: new URL(xmlContentArea.value.split('\n')[0].match(/<loc>(.*?)<\/loc>/)?.[1] || 'http://placeholder.com').origin || 'http://example.com',
+                count: tree.count
+            };
+            
+            // Start the list generation, wrapping the children in an initial UL
+            listHtml += `<ul style="list-style: none; padding-left: 0;">`;
+            generateList(exportRoot, 0);
+            listHtml += `</ul>`;
+
+            const htmlContent = `
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>${domain} - Site Hierarchy Export</title>
+    <style>
+        body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; background-color: #f8f8f8; }
+        .container { max-width: 900px; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
+        h1 { color: #1D4ED8; border-bottom: 2px solid #eee; padding-bottom: 10px; }
+        ul { list-style: none; padding-left: 0; }
+        ul li { margin: 5px 0; }
+        ul ul { border-left: 1px solid #ccc; padding-left: 15px; margin-left: 10px; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>Site Hierarchy Export for: ${domain}</h1>
+        <p>Generated on: ${new Date().toLocaleDateString()} at ${new Date().toLocaleTimeString()}</p>
+        <hr>
+        ${listHtml}
+    </div>
+</body>
+</html>
+            `;
+            return htmlContent;
+        }
+
+        function exportHierarchy() {
+            if (!parsedTreeData) {
+                showModal('Export Error', 'No parsed data available. Please parse a sitemap first.', 'text-red-600');
+                return;
+            }
+
+            const htmlToExport = buildExportHtml(parsedTreeData);
+            const domain = domainInput.value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '') || 'site-hierarchy';
+            const filename = `${domain}-hierarchy.html`;
+
+            // Create a Blob containing the HTML content
+            const blob = new Blob([htmlToExport], { type: 'text/html' });
+            
+            // Create a link element to trigger the download
+            const a = document.createElement('a');
+            a.href = URL.createObjectURL(blob);
+            a.download = filename;
+            
+            // Append the link to the body, click it, and remove it
+            document.body.appendChild(a);
+            a.click();
+            document.body.removeChild(a);
+
+            setStatus('Hierarchy exported to ' + filename, 'bg-purple-100 text-purple-800');
         }
     </script>
 </body>
