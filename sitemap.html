@@ -1,0 +1,332 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Website Hierarchy Sitemap Parser</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        'primary': '#1D4ED8',
+                        'secondary': '#6B7280',
+                    }
+                }
+            }
+        }
+    </script>
+    <style>
+        .page-item {
+            cursor: pointer;
+            transition: all 0.15s ease-in-out;
+            user-select: none;
+        }
+        .page-item:hover {
+            background-color: #F3F4F6;
+        }
+        .page-name {
+            display: flex;
+            align-items: center;
+        }
+        .page-name svg {
+            transition: transform 0.2s;
+        }
+        .collapsed .page-name svg {
+            transform: rotate(-90deg);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 sm:p-8 font-sans">
+
+    <div class="max-w-4xl mx-auto bg-white p-6 sm:p-10 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-extrabold text-primary mb-2">Website Hierarchy Generator</h1>
+        <p class="text-secondary mb-6">
+            Enter a domain to attempt fetching its <code class="bg-gray-100 p-1 rounded">sitemap.xml</code> or paste the XML content directly.
+        </p>
+
+        <!-- Input Section -->
+        <div class="space-y-4 mb-8">
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                <input type="text" id="domainInput" placeholder="Enter domain (e.g., hon.com)" value="hon.com"
+                       class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary">
+                <button id="fetchButton" onclick="attemptFetch()"
+                        class="bg-primary text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-blue-700 transition duration-150">
+                    Attempt Fetch Sitemap
+                </button>
+            </div>
+            <textarea id="xmlContent" rows="8" placeholder="... or paste the full sitemap.xml content here if automatic fetch fails due to CORS (recommended for external sites)."
+                      class="w-full p-4 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary"></textarea>
+            <button id="parseButton" onclick="parseSitemap()"
+                    class="w-full bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-green-700 transition duration-150">
+                Parse XML Content
+            </button>
+        </div>
+
+        <!-- Status and Output -->
+        <div id="statusMessage" class="mb-4 p-3 rounded-lg text-sm text-center hidden"></div>
+
+        <div id="hierarchyOutput" class="border border-gray-200 rounded-lg p-4 bg-white min-h-[100px] shadow-inner">
+            <h2 class="text-xl font-bold text-gray-700 mb-3 border-b pb-2">Page Hierarchy Tree</h2>
+            <div id="pageTree" class="space-y-1">
+                <p class="text-secondary text-center py-8">Enter a domain or paste XML content to generate the site hierarchy.</p>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Messages -->
+    <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center hidden z-50">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="modalTitle" class="text-xl font-bold mb-3 text-primary">Warning</h3>
+            <p id="modalBody" class="text-gray-700 mb-5"></p>
+            <button onclick="closeModal()" class="w-full bg-primary text-white py-2 rounded-lg hover:bg-blue-700 transition">
+                Got It
+            </button>
+        </div>
+    </div>
+
+    <script>
+        const statusMessage = document.getElementById('statusMessage');
+        const hierarchyOutput = document.getElementById('hierarchyOutput');
+        const pageTree = document.getElementById('pageTree');
+        const xmlContentArea = document.getElementById('xmlContent');
+        const domainInput = document.getElementById('domainInput');
+        
+        // --- Modal Handlers ---
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+
+        function showModal(title, body, colorClass = 'text-primary') {
+            modalTitle.textContent = title;
+            modalBody.textContent = body;
+            modalTitle.className = `text-xl font-bold mb-3 ${colorClass}`;
+            modal.classList.remove('hidden');
+        }
+
+        function closeModal() {
+            modal.classList.add('hidden');
+        }
+
+        // --- Fetching Logic (will likely fail due to CORS) ---
+        async function attemptFetch() {
+            const domain = domainInput.value.trim();
+            if (!domain) {
+                showModal('Error', 'Please enter a valid domain name.', 'text-red-600');
+                return;
+            }
+
+            const url = `https://${domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}/sitemap.xml`;
+            
+            setStatus('Attempting to fetch sitemap...', 'bg-yellow-100 text-yellow-800');
+            
+            try {
+                const response = await fetch(url);
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status}`);
+                }
+                const xmlText = await response.text();
+                xmlContentArea.value = xmlText;
+                setStatus('Sitemap fetched successfully! Click "Parse XML Content" to continue.', 'bg-green-100 text-green-800');
+                parseSitemap();
+            } catch (error) {
+                console.error("Fetch failed:", error);
+                const message = `Automatic fetch failed due to browser security restrictions (CORS) or the sitemap not being found at ${url}. Please manually navigate to that URL, copy the raw XML content, and paste it into the textarea above.`;
+                setStatus('Fetch failed. See details below.', 'bg-red-100 text-red-800');
+                showModal('CORS Error', message, 'text-red-600');
+            }
+        }
+        
+        // --- Core Parsing and Hierarchy Generation ---
+
+        function parseSitemap() {
+            const xmlString = xmlContentArea.value.trim();
+            if (!xmlString) {
+                showModal('Error', 'Please paste sitemap XML content or successfully fetch a domain first.', 'text-red-600');
+                return;
+            }
+
+            setStatus('Parsing XML and generating hierarchy...', 'bg-blue-100 text-blue-800');
+            
+            try {
+                // 1. Parse XML to get URL list
+                const parser = new DOMParser();
+                const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+                const locElements = xmlDoc.getElementsByTagName('loc');
+                
+                if (locElements.length === 0) {
+                    throw new Error("No <loc> (URL) tags found in the provided XML. Check if it's a valid sitemap.xml file.");
+                }
+
+                const urls = Array.from(locElements).map(el => el.textContent.trim());
+
+                // 2. Build the URL Tree
+                const tree = buildHierarchyTree(urls);
+
+                // 3. Render the Tree
+                renderTree(tree);
+
+                setStatus(`Successfully parsed ${urls.length} URLs and generated the hierarchy.`, 'bg-green-100 text-green-800');
+            } catch (error) {
+                console.error("Parsing Error:", error);
+                setStatus('Error during parsing.', 'bg-red-100 text-red-800');
+                showModal('Parsing Error', `Could not parse the XML content: ${error.message}`, 'text-red-600');
+            }
+        }
+
+        function setStatus(message, className) {
+            statusMessage.textContent = message;
+            statusMessage.className = `mb-4 p-3 rounded-lg text-sm text-center ${className}`;
+            statusMessage.classList.remove('hidden');
+        }
+
+        /**
+         * Normalizes a URL and extracts the clean path segments.
+         * e.g., 'https://www.hon.com/products/chairs/' -> ['products', 'chairs']
+         */
+        function normalizeUrl(url) {
+            try {
+                const parsedUrl = new URL(url);
+                // Get pathname, remove leading/trailing slashes, and split by '/'
+                let path = parsedUrl.pathname.replace(/^\/|\/$/g, '');
+                if (!path) return ['/']; // Represents the homepage
+                return path.split('/').filter(segment => segment.length > 0);
+            } catch (e) {
+                // Handle invalid URL format by treating it as a single segment
+                return url.split('/').filter(segment => segment.length > 0);
+            }
+        }
+
+        /**
+         * Builds a recursive tree structure from a flat list of URLs.
+         */
+        function buildHierarchyTree(urls) {
+            const root = { name: '/', children: {}, fullPath: '/', count: 0 };
+            const domain = urls.length > 0 ? new URL(urls[0]).origin : '';
+
+            urls.forEach(url => {
+                const segments = normalizeUrl(url);
+                let currentNode = root;
+                root.count++;
+                
+                if (segments.length === 1 && segments[0] === '/') {
+                    return; // Handled the root count, no deeper structure needed
+                }
+
+                let currentPath = domain;
+
+                for (let i = 0; i < segments.length; i++) {
+                    const segment = segments[i];
+                    
+                    // Reconstruct full path for the node
+                    currentPath += '/' + segment;
+                    if (i < segments.length - 1) {
+                         currentPath += '/'; // Keep trailing slash for intermediate directories
+                    } else if (url.endsWith('/') && i === segments.length - 1) {
+                         currentPath += '/';
+                    } else if (url.endsWith('.html') || url.endsWith('.php') || url.endsWith('.aspx') || i === segments.length - 1) {
+                        // It's a file or final segment, no trailing slash needed unless it was in the original URL
+                    }
+
+                    if (!currentNode.children[segment]) {
+                        currentNode.children[segment] = { 
+                            name: segment, 
+                            children: {}, 
+                            fullPath: currentPath.replace(/\/$/, ''), // Clean final path
+                            count: 0,
+                            isLeaf: (i === segments.length - 1) // Mark if it's the final segment of the original URL
+                        };
+                    }
+
+                    currentNode = currentNode.children[segment];
+                    currentNode.count++;
+                }
+            });
+
+            // Convert children maps to sorted arrays
+            function sortAndClean(node) {
+                node.children = Object.values(node.children)
+                    .map(child => sortAndClean(child))
+                    .sort((a, b) => b.count - a.count || a.name.localeCompare(b.name));
+                
+                // If a non-leaf node has a final segment identical to the parent, the node count can be misleading.
+                // We mainly rely on the structure now.
+                return node;
+            }
+
+            return sortAndClean(root);
+        }
+        
+        // --- Rendering Logic ---
+
+        function renderTree(tree) {
+            pageTree.innerHTML = '';
+            
+            const domain = domainInput.value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+            const rootHtml = createNodeElement({
+                name: domain || 'Root Domain',
+                children: tree.children,
+                fullPath: tree.fullPath,
+                count: tree.count
+            }, 0);
+            pageTree.appendChild(rootHtml);
+        }
+
+        function createNodeElement(node, depth) {
+            const nodeElement = document.createElement('div');
+            nodeElement.classList.add('pl-4', 'border-l', 'border-gray-200', 'py-1');
+
+            const isCollapsible = node.children && node.children.length > 0;
+            const itemClasses = ['page-item', 'flex', 'items-center', 'justify-between', 'rounded-lg', 'pr-2'];
+            if (depth === 0) itemClasses.push('bg-indigo-50', 'text-indigo-800', 'font-bold', 'shadow-sm');
+
+            const itemContainer = document.createElement('div');
+            itemContainer.classList.add(...itemClasses);
+            itemContainer.style.paddingLeft = `${depth * 0.75}rem`;
+            
+            const iconSvg = `<svg class="w-4 h-4 text-secondary mr-2 transition-transform ${isCollapsible ? '' : 'invisible'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>`;
+            
+            const pageName = document.createElement('span');
+            pageName.classList.add('flex', 'items-center', 'truncate', 'py-1.5');
+            pageName.innerHTML = `${iconSvg}
+                <span class="font-medium truncate">${node.name === '/' ? 'Home (Root)' : node.name}</span>
+                <span class="ml-2 text-xs font-normal text-gray-500">(${node.count} subpages)</span>`;
+            
+            const pathHint = document.createElement('span');
+            pathHint.classList.add('text-xs', 'text-gray-400', 'font-mono', 'hidden', 'sm:block', 'truncate', 'max-w-[40%]');
+            pathHint.textContent = node.fullPath;
+
+            itemContainer.appendChild(pageName);
+            itemContainer.appendChild(pathHint);
+
+            const childrenContainer = document.createElement('div');
+            childrenContainer.classList.add('children-container', 'space-y-1', 'mt-1', 'pl-4', 'hidden'); 
+
+            if (isCollapsible) {
+                itemContainer.addEventListener('click', () => {
+                    childrenContainer.classList.toggle('hidden');
+                    itemContainer.classList.toggle('collapsed');
+                });
+                itemContainer.classList.add('cursor-pointer');
+            } else {
+                itemContainer.classList.add('opacity-75');
+            }
+
+            if (node.children) {
+                node.children.forEach(child => {
+                    childrenContainer.appendChild(createNodeElement(child, depth + 1));
+                });
+            }
+
+            nodeElement.appendChild(itemContainer);
+            nodeElement.appendChild(childrenContainer);
+
+            return nodeElement;
+        }
+    </script>
+</body>
+</html>
