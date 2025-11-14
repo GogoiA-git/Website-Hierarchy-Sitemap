@@ -347,7 +347,7 @@
             } catch(e) { /* default to 'Root' */ }
 
             // The root node represents the domain itself
-            const root = { name: domain, children: {}, fullPath: origin || '/', count: 0, isLeaf: false };
+            const root = { name: domain, children: {}, fullPath: origin || '/', count: 0, isLeaf: false, url: origin || '#' };
 
             urls.forEach(url => {
                 const segments = normalizeUrl(url);
@@ -376,11 +376,16 @@
                             children: {}, 
                             fullPath: currentPath, 
                             count: 0,
-                            isLeaf: (i === segments.length - 1) // Is it the end of *this* URL path?
+                            isLeaf: (i === segments.length - 1), // Is it the end of *this* URL path?
+                            url: currentPath + (i === segments.length - 1 ? '' : '/')
                         };
-                    } else if (i === segments.length - 1) {
-                        // This path segment already existed, but it's also the end of *this* URL
-                        currentNode.children[segment].isLeaf = true;
+                    } else {
+                        // This path segment already existed
+                        if (i === segments.length - 1) {
+                            // This path segment already existed, but it's also the end of *this* URL
+                            currentNode.children[segment].isLeaf = true;
+                            currentNode.children[segment].url = url; // Set the actual URL
+                        }
                     }
 
                     currentNode = currentNode.children[segment];
@@ -406,13 +411,13 @@
             return sortAndClean(root);
         }
         
-        // --- Rendering Logic ---
+        // --- Rendering Logic (In-App) ---
 
         function renderTree(tree) {
             pageTree.innerHTML = '';
             
             // The main node is the root (domain)
-            const rootHtml = createNodeElement(tree, 0);
+            const rootHtml = createNodeElement(tree, 0, false); // Keep isExported=false
             pageTree.appendChild(rootHtml);
             
             // Expand the first level by default
@@ -426,7 +431,7 @@
             setButtonsDisabled(false);
         }
 
-        function createNodeElement(node, depth) {
+        function createNodeElement(node, depth, isExported) {
             const nodeElement = document.createElement('div');
             // Base structural styles
             if (depth > 0) {
@@ -450,18 +455,38 @@
             // Page name and count
             const pageName = document.createElement('span');
             pageName.classList.add('page-name', 'truncate', 'py-1.5');
-            pageName.innerHTML = `${iconSvg}
-                <span class="font-medium truncate">${node.name === '/' ? 'Home (Root)' : node.name}</span>
-                <span classs="ml-1 text-xs font-normal text-gray-400">${node.isLeaf && !isCollapsible ? ' (page)' : ''}</span>
-                <span class="ml-2 text-xs font-normal text-gray-500">(${node.count} sub-items)</span>`;
             
-            // Path hint (e.g., /products/chairs)
+            const nodeNameDisplay = node.name === '/' ? 'Home (Root)' : node.name;
+            const fullUrl = node.isLeaf || depth === 0 ? node.url : (node.fullPath + '/');
+            
+            let nameHtml;
+            
+            if (isExported) {
+                // Exported HTML: Show name and URL as a clickable link
+                nameHtml = `${iconSvg}
+                    <span class="font-medium truncate">${nodeNameDisplay}</span>
+                    ${node.isLeaf && depth > 0 ? ` <a href="${fullUrl}" target="_blank" class="url-link text-xs text-blue-600 ml-2 font-normal truncate max-w-xs hover:underline">${fullUrl}</a>` : ''}
+                    <span class="ml-2 text-xs font-normal text-gray-500">(${node.count} sub-items)</span>`;
+            } else {
+                // In-app rendering: Show name and segment count
+                nameHtml = `${iconSvg}
+                    <span class="font-medium truncate">${nodeNameDisplay}</span>
+                    <span classs="ml-1 text-xs font-normal text-gray-400">${node.isLeaf && !isCollapsible ? ' (page)' : ''}</span>
+                    <span class="ml-2 text-xs font-normal text-gray-500">(${node.count} sub-items)</span>`;
+            }
+            
+            pageName.innerHTML = nameHtml;
+
+
+            // Path hint (e.g., /products/chairs) - Only shown in app, not needed in export as the URL is included in pageName
             const pathHint = document.createElement('span');
             pathHint.classList.add('text-xs', 'text-gray-400', 'font-mono', 'hidden', 'sm:block', 'truncate', 'max-w-[40%]');
             pathHint.textContent = node.fullPath;
-
+            
             itemContainer.appendChild(pageName);
-            itemContainer.appendChild(pathHint);
+            if (!isExported) {
+                itemContainer.appendChild(pathHint);
+            }
 
             // Children container (hidden by default)
             const childrenContainer = document.createElement('div');
@@ -476,7 +501,7 @@
 
             if (node.children) {
                 node.children.forEach(child => {
-                    childrenContainer.appendChild(createNodeElement(child, depth + 1));
+                    childrenContainer.appendChild(createNodeElement(child, depth + 1, isExported));
                 });
             }
 
@@ -503,6 +528,35 @@
             });
         }
 
+        /**
+         * Recursively generates HTML for the exported file, including the full URL.
+         * This function is similar to renderTree but uses the 'isExported=true' flag for URL display.
+         */
+        function generateExportHtml(tree) {
+            const tempDiv = document.createElement('div');
+            // We use the same structure, but pass true for isExported
+            tempDiv.appendChild(createNodeElement(tree, 0, true)); 
+            
+            // Expand all nodes for the static HTML content before returning
+            function expandAllExport(container) {
+                const item = container.querySelector('.page-item.collapsed');
+                if (item) item.classList.remove('collapsed');
+                
+                const children = container.querySelector('.children-container');
+                if (children) children.classList.remove('hidden');
+                
+                container.querySelectorAll('.children-container').forEach(childContainer => {
+                    expandAllExport(childContainer.parentNode);
+                });
+            }
+            
+            // We can't use the in-app toggleAllNodes because it operates on the live DOM.
+            // Instead, we just need the tree structure, and the exported JS will handle the toggling.
+            // Let's ensure the initial state is collapsed, and the exported JS will handle expansion.
+            
+            return tempDiv.innerHTML;
+        }
+
         // --- Robust HTML Export Logic ---
         function exportInteractiveHtml() {
             if (pageTree.children.length === 0 || pageTree.querySelector('p.text-secondary')) {
@@ -512,9 +566,19 @@
             
             setStatus('Generating interactive HTML file...', 'bg-indigo-100 text-indigo-800');
 
-            // Get the dynamic tree content
-            const treeContent = pageTree.innerHTML;
+            // --- START: NEW EXPORT LOGIC ---
+            // 1. Get the raw XML content to re-parse the tree structure
+            const xmlString = xmlContentArea.value.trim();
+            const parser = new DOMParser();
+            const xmlDoc = parser.parseFromString(xmlString, "text/xml");
+            const locElements = xmlDoc.getElementsByTagName('loc');
+            const urls = Array.from(locElements).map(el => el.textContent.trim());
+            const tree = buildHierarchyTree(urls);
             
+            // 2. Generate HTML content using the export rendering logic
+            const treeContent = generateExportHtml(tree);
+            // --- END: NEW EXPORT LOGIC ---
+
             // Define styles necessary for the exported HTML
             const exportedStyles = `
                 <style>
@@ -536,7 +600,31 @@
                     .page-item:hover { background-color: #f3f4f6; }
                     .page-item.cursor-pointer { cursor: pointer; }
                     
-                    .page-name { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 6px; padding-bottom: 6px; }
+                    .page-name { 
+                        display: flex; 
+                        align-items: center; 
+                        overflow: hidden; 
+                        text-overflow: ellipsis; 
+                        white-space: nowrap; 
+                        padding-top: 6px; 
+                        padding-bottom: 6px; 
+                        flex-grow: 1; /* Allows it to take space and manage URL truncation */
+                    }
+                    .url-link {
+                        /* Styles for the full URL link */
+                        font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace;
+                        overflow: hidden;
+                        text-overflow: ellipsis;
+                        white-space: nowrap;
+                        display: inline-block;
+                        max-width: 50%; /* Control max width for link on desktop */
+                        padding-left: 0.5rem;
+                        flex-shrink: 1;
+                    }
+                    @media (max-width: 640px) {
+                        .url-link { max-width: 60%; } /* More space for link on mobile */
+                    }
+
                     .collapse-icon { width: 1rem; height: 1rem; color: #6B7280; margin-right: 8px; transition: transform 0.2s; flex-shrink: 0; }
                     .invisible { visibility: hidden; }
                     .page-item.collapsed .collapse-icon { transform: rotate(-90deg); }
@@ -558,14 +646,11 @@
                     
                     .text-gray-400 { color: #9ca3af; }
                     .text-gray-500 { color: #6b7280; }
-                    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+                    .text-blue-600 { color: #2563EB; }
                     .text-xs { font-size: 0.75rem; line-height: 1rem; }
-                    .ml-1 { margin-left: 0.25rem; }
                     .ml-2 { margin-left: 0.5rem; }
                     
                     .hidden { display: none; }
-                    .sm\:block { display: block; } /* Simplify for export */
-                    .max-w-\\[40\\%\\] { max-width: 40%; }
                     
                     /* Export-specific controls */
                     .controls { margin-bottom: 1rem; display: flex; gap: 0.5rem; }
@@ -642,8 +727,8 @@
 </head>
 <body>
     <div class="container">
-        <h1 class="header">Website Page Hierarchy Export</h1>
-        <p style="color: #6B7280; margin-bottom: 20px;">Generated from the Sitemap Parser tool. This is an interactive hierarchy.</p>
+        <h1 class="header">Website Page Hierarchy Export (with URLs)</h1>
+        <p style="color: #6B7280; margin-bottom: 20px;">Generated from the Sitemap Parser tool. This is an interactive hierarchy. Full URLs are displayed for leaf nodes (actual pages).</p>
         
         <div class="controls">
             <button id="exportExpand">Expand All</button>
@@ -664,7 +749,7 @@
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'website_hierarchy_export.html';
+                a.download = 'website_hierarchy_export_with_urls.html';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
