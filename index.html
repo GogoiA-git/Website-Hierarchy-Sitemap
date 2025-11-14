@@ -3,8 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitemap Hierarchy Generator & Exporter</title>
+    <title>Website Hierarchy Sitemap Parser</title>
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- PDF Libraries via CDN -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    
     <script>
         tailwind.config = {
             theme: {
@@ -12,425 +16,758 @@
                     fontFamily: {
                         sans: ['Inter', 'sans-serif'],
                     },
+                    colors: {
+                        'primary': '#1D4ED8',
+                        'secondary': '#6B7280',
+                    }
                 }
             }
         }
     </script>
     <style>
-        .hierarchy-container {
-            font-family: 'Inter', sans-serif;
+        /* Base styles for the page item */
+        .page-item {
+            transition: all 0.15s ease-in-out;
+            user-select: none;
         }
-        /* Custom styling for the hierarchy tree */
-        .tree ul {
-            list-style-type: none;
-            padding-left: 1.5rem;
-            margin-top: 0.25rem;
-            border-left: 1px dashed #e5e7eb; /* Light gray dash for tree line */
+        .page-item:hover {
+            background-color: #F3F4F6;
         }
-        .tree > ul {
-            padding-left: 0;
-            border-left: none;
+        .page-name {
+            display: flex;
+            align-items: center;
         }
-        .tree li {
-            padding-left: 0.5rem;
-            position: relative;
+        /* Icon rotation for collapsed state */
+        .page-item.collapsed .collapse-icon {
+            transform: rotate(-90deg);
         }
-        .tree li .toggle-btn {
-            cursor: pointer;
-            margin-right: 0.5rem;
+        .collapse-icon {
             transition: transform 0.2s;
         }
-        .tree li.expanded > .content > .toggle-btn {
-            transform: rotate(90deg);
+        
+        /* Hierarchy container styling */
+        .hierarchy-container {
+            max-height: 500px;
+            overflow-y: auto;
+            border: 1px solid #e5e7eb;
+            border-radius: 8px;
+            padding: 16px;
+            background-color: #ffffff;
+            min-height: 100px;
+            box-shadow: inset 0 2px 4px 0 rgb(0 0 0 / 0.05);
+        }
+
+        /* Styles for the loading overlay during PDF generation */
+        .pdf-loading-overlay {
+            position: absolute;
+            inset: 0;
+            background-color: rgba(255, 255, 255, 0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-weight: 600;
+            color: #1D4ED8;
+            z-index: 10;
+        }
+        
+        /* Spinner for loading */
+        .spinner {
+            width: 24px;
+            height: 24px;
+            border: 4px solid currentColor;
+            border-right-color: transparent;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin-right: 12px;
+        }
+        @keyframes spin {
+            to {
+                transform: rotate(360deg);
+            }
         }
     </style>
 </head>
-<body class="bg-gray-50 p-4 md:p-8 min-h-screen font-sans">
+<body class="bg-gray-50 min-h-screen p-4 sm:p-8 font-sans">
 
-    <div class="max-w-4xl mx-auto">
-        <header class="mb-8">
-            <h1 class="text-3xl font-extrabold text-indigo-700 tracking-tight">Sitemap Hierarchy Tool</h1>
-            <p class="text-gray-500">Paste your XML sitemap content below to visualize and export the URL structure.</p>
-        </header>
+    <div class="max-w-4xl mx-auto bg-white p-6 sm:p-10 rounded-xl shadow-2xl">
+        <h1 class="text-3xl font-extrabold text-primary mb-2">Website Hierarchy Generator</h1>
+        <p class="text-secondary mb-6">
+            Enter a domain to attempt fetching its <code class="bg-gray-100 p-1 rounded">sitemap.xml</code> or paste the XML content directly.
+        </p>
 
-        <!-- Input Area -->
-        <div class="bg-white p-6 rounded-xl shadow-lg mb-8">
-            <label for="xmlInput" class="block text-lg font-medium text-gray-700 mb-2">Paste XML Sitemap Data</label>
-            <textarea id="xmlInput" rows="10" class="w-full border-2 border-gray-300 rounded-lg p-3 focus:ring-indigo-500 focus:border-indigo-500 transition duration-150 ease-in-out font-mono text-sm" placeholder="<urlset>...</urlset>"></textarea>
-            
-            <div class="flex flex-col sm:flex-row space-y-4 sm:space-y-0 sm:space-x-4 mt-4">
-                <button onclick="parseAndDisplay()" id="parseBtn" class="w-full sm:w-auto flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-200">
-                    Parse XML & Build Hierarchy
+        <!-- Input Section -->
+        <div class="space-y-4 mb-8">
+            <div class="flex flex-col sm:flex-row space-y-3 sm:space-y-0 sm:space-x-3">
+                <input type="text" id="domainInput" placeholder="Enter domain (e.g., hon.com)" value="hon.com"
+                       class="flex-grow p-3 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary">
+                <button id="fetchButton"
+                        class="bg-primary text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-blue-700 transition duration-150">
+                    Attempt Fetch Sitemap
                 </button>
-                <div class="relative w-full sm:w-auto flex-1">
-                    <button onclick="exportSitemapHtml()" id="exportBtn" class="w-full bg-green-600 hover:bg-green-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-200" disabled>
-                        Export Hierarchy to HTML
-                    </button>
-                    <!-- Added warning for Canvas preview limitations -->
-                    <p id="exportWarning" class="absolute -bottom-6 w-full text-xs text-red-500 text-center sm:text-left hidden">
-                        (Download often blocked in this preview environment.)
-                    </p>
-                </div>
             </div>
+            <textarea id="xmlContent" rows="8" placeholder="... or paste the full sitemap.xml content here if automatic fetch fails due to CORS (recommended for external sites)."
+                      class="w-full p-4 border border-gray-300 rounded-lg focus:ring-primary focus:border-primary"></textarea>
+            <button id="parseButton"
+                    class="w-full bg-green-600 text-white font-semibold py-3 px-6 rounded-lg shadow-lg hover:bg-green-700 transition duration-150">
+                Parse XML Content
+            </button>
         </div>
 
-        <!-- Status and Output Area -->
-        <div id="statusMessage" class="hidden p-3 mb-4 rounded-lg text-sm font-medium" role="alert"></div>
+        <!-- Status and Output -->
+        <div id="statusMessage" class="mb-4 p-3 rounded-lg text-sm text-center hidden"></div>
 
-        <div class="bg-white p-6 rounded-xl shadow-lg" id="outputCard">
-            <h2 class="text-2xl font-semibold text-gray-700 mb-4">Site Structure Hierarchy</h2>
-            <div id="hierarchyOutput" class="min-h-[100px] hierarchy-container p-4 border border-gray-200 rounded-lg bg-gray-50 overflow-auto tree">
-                <p class="text-gray-400">Hierarchy will appear here after parsing.</p>
+        <div id="hierarchyOutput" class="relative"> <!-- Added relative for loading overlay -->
+            <div class="flex justify-between items-center mb-3 border-b pb-2">
+                <h2 class="text-xl font-bold text-gray-700">Page Hierarchy Tree</h2>
+                <div class="space-x-2">
+                    <!-- New Expand/Collapse All Buttons -->
+                    <button id="collapseAllButton"
+                            class="bg-gray-500 text-white text-sm font-semibold py-1.5 px-4 rounded-lg shadow-md hover:bg-gray-600 transition duration-150 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                        Collapse All
+                    </button>
+                    <button id="expandAllButton"
+                            class="bg-gray-500 text-white text-sm font-semibold py-1.5 px-4 rounded-lg shadow-md hover:bg-gray-600 transition duration-150 disabled:bg-gray-400 disabled:cursor-not-allowed" disabled>
+                        Expand All
+                    </button>
+                    <!-- Export Buttons -->
+                    <button id="exportHtmlButton" disabled
+                            class="bg-indigo-600 text-white text-sm font-semibold py-1.5 px-4 rounded-lg shadow-md hover:bg-indigo-700 transition duration-150 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        Export HTML
+                    </button>
+                    <button id="downloadPdfButton" disabled
+                            class="bg-red-600 text-white text-sm font-semibold py-1.5 px-4 rounded-lg shadow-md hover:bg-red-700 transition duration-150 disabled:bg-gray-400 disabled:cursor-not-allowed">
+                        Download PDF
+                    </button>
+                </div>
             </div>
+            
+            <div id="pageTree" class="hierarchy-container">
+                <p class="text-secondary text-center py-8">Enter a domain or paste XML content to generate the site hierarchy.</p>
+            </div>
+
+            <!-- Loading Overlay for PDF -->
+            <div id="pdfLoading" class="pdf-loading-overlay hidden">
+                <div class="spinner"></div>
+                Generating PDF...
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal for Messages -->
+    <div id="modal" class="fixed inset-0 bg-gray-900 bg-opacity-75 flex items-center justify-center hidden z-50 p-4">
+        <div class="bg-white p-6 rounded-xl shadow-2xl max-w-sm w-full">
+            <h3 id="modalTitle" class="text-xl font-bold mb-3 text-primary">Warning</h3>
+            <p id="modalBody" class="text-gray-700 mb-5"></p>
+            <button id="modalCloseButton" class="w-full bg-primary text-white py-2 rounded-lg hover:bg-blue-700 transition">
+                Got It
+            </button>
         </div>
     </div>
 
     <script>
-        // Global variables for Firebase compatibility, though not used here
-        const appId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        // --- DOM Element References ---
+        const statusMessage = document.getElementById('statusMessage');
+        const pageTree = document.getElementById('pageTree');
+        const xmlContentArea = document.getElementById('xmlContent');
+        const domainInput = document.getElementById('domainInput');
+        
+        // Buttons
+        const fetchButton = document.getElementById('fetchButton');
+        const parseButton = document.getElementById('parseButton');
+        const downloadPdfButton = document.getElementById('downloadPdfButton');
+        const exportHtmlButton = document.getElementById('exportHtmlButton');
+        const collapseAllButton = document.getElementById('collapseAllButton');
+        const expandAllButton = document.getElementById('expandAllButton');
 
-        // --- Helper Functions ---
+        // Modal
+        const modal = document.getElementById('modal');
+        const modalTitle = document.getElementById('modalTitle');
+        const modalBody = document.getElementById('modalBody');
+        const modalCloseButton = document.getElementById('modalCloseButton');
+        
+        // PDF Loading
+        const pdfLoading = document.getElementById('pdfLoading');
 
-        /**
-         * Shows a transient status message.
-         * @param {string} message - The message content.
-         * @param {string} type - 'success' or 'error'.
-         */
-        function showStatus(message, type) {
-            const statusDiv = document.getElementById('statusMessage');
-            statusDiv.textContent = message;
-            statusDiv.className = `p-3 mb-4 rounded-lg text-sm font-medium ${type === 'success' ? 'bg-green-100 text-green-800' : 'bg-red-100 text-red-800'}`;
-            statusDiv.classList.remove('hidden');
+        // --- Event Listeners ---
+        document.addEventListener('DOMContentLoaded', () => {
+            fetchButton.addEventListener('click', attemptFetch);
+            parseButton.addEventListener('click', parseSitemap);
+            exportHtmlButton.addEventListener('click', exportInteractiveHtml);
+            downloadPdfButton.addEventListener('click', generatePdf);
+            modalCloseButton.addEventListener('click', closeModal);
+            expandAllButton.addEventListener('click', () => toggleAllNodes(true));
+            collapseAllButton.addEventListener('click', () => toggleAllNodes(false));
+        });
 
-            setTimeout(() => {
-                statusDiv.classList.add('hidden');
-            }, 5000);
+        // --- Modal Handlers ---
+        function showModal(title, body, colorClass = 'text-primary') {
+            modalTitle.textContent = title;
+            modalBody.innerHTML = body; // Use innerHTML to allow for formatted links
+            modalTitle.className = `text-xl font-bold mb-3 ${colorClass}`;
+            modal.classList.remove('hidden');
         }
 
-        /**
-         * Toggles the expand/collapse state of a hierarchy node (used in both main app and exported HTML).
-         * @param {HTMLElement} button - The button element that was clicked.
-         */
-        function toggleNode(button) {
-            const li = button.closest('li');
-            const childrenUl = li.querySelector(':scope > ul');
-            if (childrenUl) {
-                if (childrenUl.classList.contains('hidden')) {
-                    childrenUl.classList.remove('hidden');
-                    li.classList.add('expanded');
-                    button.innerHTML = '&#9660;'; // Down triangle (or right triangle rotated 90deg)
-                } else {
-                    childrenUl.classList.add('hidden');
-                    li.classList.remove('expanded');
-                    button.innerHTML = '&#9658;'; // Right triangle
+        function closeModal() {
+            modal.classList.add('hidden');
+        }
+        
+        // --- Helper: Set Button States ---
+        function setButtonsDisabled(disabled) {
+            downloadPdfButton.disabled = disabled;
+            exportHtmlButton.disabled = disabled;
+            collapseAllButton.disabled = disabled;
+            expandAllButton.disabled = disabled;
+        }
+
+        // --- Fetching Logic ---
+        async function attemptFetch() {
+            const domain = domainInput.value.trim();
+            if (!domain) {
+                showModal('Error', 'Please enter a valid domain name.', 'text-red-600');
+                return;
+            }
+
+            const url = `https://${domain.replace(/^https?:\/\//, '').replace(/\/$/, '')}/sitemap.xml`;
+            
+            setStatus('Attempting to fetch sitemap...', 'bg-yellow-100 text-yellow-800');
+            setButtonsDisabled(true);
+            
+            try {
+                // We use a proxy to bypass CORS.
+                // This is a simple free proxy, not for production use.
+                const proxyUrl = `https://api.allorigins.win/raw?url=${encodeURIComponent(url)}`;
+                
+                const response = await fetch(proxyUrl);
+                
+                if (!response.ok) {
+                    throw new Error(`HTTP Error: ${response.status} from proxy or target.`);
                 }
+                const xmlText = await response.text();
+                
+                if (xmlText.startsWith('{"status":"error"')) {
+                     throw new Error(`Proxy error: ${xmlText}`);
+                }
+                
+                xmlContentArea.value = xmlText;
+                setStatus('Sitemap fetched successfully! Click "Parse XML Content" to continue.', 'bg-green-100 text-green-800');
+                parseSitemap();
+                
+            } catch (error) {
+                console.error("Fetch failed:", error);
+                const message = `Automatic fetch failed (e.g., CORS, 404, or proxy issue).<br><br>
+                                 <b>Manual Fallback:</b> Please try to navigate to <a href="${url}" target="_blank" class="text-primary underline">${url}</a>, copy the raw XML content, and paste it into the textarea above.`;
+                setStatus('Fetch failed. See details below.', 'bg-red-100 text-red-800');
+                showModal('Fetch Error', message, 'text-red-600');
             }
         }
+        
+        // --- Core Parsing and Hierarchy Generation ---
 
-        // --- Sitemap Parsing Logic ---
+        function parseSitemap() {
+            const xmlString = xmlContentArea.value.trim();
+            if (!xmlString) {
+                showModal('Error', 'Please paste sitemap XML content or successfully fetch a domain first.', 'text-red-600');
+                return;
+            }
 
-        /**
-         * Builds the hierarchical tree structure from an array of URLs.
-         * @param {string[]} urls - Array of URL strings.
-         * @returns {Object} The root of the hierarchy tree.
-         */
-        function buildHierarchyTree(urls) {
-            const tree = {};
-
-            urls.forEach(url => {
-                try {
-                    // Extract path, removing 'http(s)://' and keeping hostname for the root
-                    const { hostname, pathname } = new URL(url);
-                    let current = tree;
-
-                    // 1. Set the hostname as the root node if not present
-                    if (!current[hostname]) {
-                        current[hostname] = { children: {}, _url: null };
-                    }
-                    current = current[hostname].children;
-                    
-                    // 2. Process path segments
-                    const segments = pathname.split('/').filter(s => s.length > 0);
-
-                    // If URL is just the root (e.g., https://example.com/), it's handled by hostname setup.
-                    if (segments.length === 0) {
-                        current = tree[hostname];
-                        current._url = url; // Mark root node with its URL
-                        return;
-                    }
-                    
-                    for (let i = 0; i < segments.length; i++) {
-                        const segment = segments[i];
-
-                        if (!current[segment]) {
-                            current[segment] = { children: {}, _url: null };
-                        }
-                        
-                        // Move deeper into the tree
-                        current = current[segment].children;
-                        
-                        // If this is the last segment, mark the parent node's URL
-                        if (i === segments.length - 1) {
-                            // Find the correct node (which is the parent of the 'children' object)
-                            let parentNode = tree[hostname];
-                            let tempSegments = pathname.split('/').filter(s => s.length > 0);
-                            
-                            for(let j = 0; j <= i; j++) {
-                                if (j === i) {
-                                    parentNode = parentNode.children[tempSegments[j]];
-                                } else {
-                                    parentNode = parentNode.children[tempSegments[j]];
-                                }
-                            }
-                            parentNode._url = url;
-                        }
-                    }
-                } catch (e) {
-                    console.error("Error processing URL:", url, e);
-                }
-            });
-            return tree;
-        }
-
-        /**
-         * Parses the XML, extracts URLs, and builds the hierarchy tree.
-         * @param {string} xmlString - The raw XML content.
-         * @returns {Object | null} The hierarchy tree or null on error.
-         */
-        function parseSitemap(xmlString) {
+            setStatus('Parsing XML and generating hierarchy...', 'bg-blue-100 text-blue-800');
+            setButtonsDisabled(true);
+            
             try {
+                // 1. Parse XML to get URL list
                 const parser = new DOMParser();
                 const xmlDoc = parser.parseFromString(xmlString, "text/xml");
-
-                // Check for parsing errors
-                if (xmlDoc.getElementsByTagName("parsererror").length) {
-                    throw new Error("Invalid XML format. Please check your sitemap data.");
-                }
                 
-                // Get all <loc> elements
-                const locs = xmlDoc.getElementsByTagName('loc');
-                const urls = [];
-                for (let i = 0; i < locs.length; i++) {
-                    const url = locs[i].textContent.trim();
-                    if (url) {
-                        urls.push(url);
-                    }
-                }
-                
-                if (urls.length === 0) {
-                    throw new Error("No <loc> URLs found in the sitemap.");
+                // Check for parse errors
+                if (xmlDoc.getElementsByTagName('parsererror').length) {
+                    throw new Error("Invalid XML content. Could not be parsed.");
                 }
 
-                return buildHierarchyTree(urls);
+                const locElements = xmlDoc.getElementsByTagName('loc');
+                if (locElements.length === 0) {
+                    throw new Error("No <loc> (URL) tags found. Please check if this is a valid sitemap.xml file or a sitemap index file (which is not supported).");
+                }
 
+                const urls = Array.from(locElements).map(el => el.textContent.trim());
+
+                // 2. Build the URL Tree
+                const tree = buildHierarchyTree(urls);
+
+                // 3. Render the Tree
+                renderTree(tree);
+
+                setStatus(`Successfully parsed ${urls.length} URLs and generated the hierarchy.`, 'bg-green-100 text-green-800');
             } catch (error) {
-                console.error("Sitemap Parsing Error:", error);
-                showStatus(error.message, 'error');
-                return null;
+                console.error("Parsing Error:", error);
+                setStatus('Error during parsing.', 'bg-red-100 text-red-800');
+                showModal('Parsing Error', `Could not parse the XML content: ${error.message}`, 'text-red-600');
+                pageTree.innerHTML = `<p class="text-secondary text-center py-8">An error occurred during parsing.</p>`;
             }
         }
 
-        // --- HTML Rendering Logic ---
+        function setStatus(message, className) {
+            statusMessage.textContent = message;
+            statusMessage.className = `mb-4 p-3 rounded-lg text-sm text-center ${className}`;
+            statusMessage.classList.remove('hidden');
+        }
 
         /**
-         * Recursively generates the HTML list structure for the hierarchy.
-         * @param {Object} node - The current node in the tree (children object).
-         * @param {boolean} isExported - Flag to modify output for the exported file.
-         * @param {number} depth - Current recursion depth.
-         * @returns {string} HTML string for the <ul>.
+         * Normalizes a URL and extracts the clean path segments.
+         * e.g., 'https://www.hon.com/products/chairs/' -> ['products', 'chairs']
+         * e.g., 'https://www.hon.com/' -> ['/']
          */
-        function generateHierarchyHtml(node, isExported, depth = 0) {
-            const childrenKeys = Object.keys(node).sort();
-            if (childrenKeys.length === 0) return '';
-
-            // Use 'ul' for the list container. In the exported file, this is needed to scope the toggle.
-            let html = '<ul>';
-
-            childrenKeys.forEach(key => {
-                const item = node[key];
-                const hasChildren = Object.keys(item.children).length > 0;
+        function normalizeUrl(url) {
+            try {
+                const parsedUrl = new URL(url);
+                let path = parsedUrl.pathname;
                 
-                // Apply 'expanded' class only if it has children and is the root level (depth 0)
-                // Exported file will default to collapsed (no 'expanded' class)
-                const liClass = hasChildren ? (depth === 0 && !isExported ? 'expanded' : '') : '';
+                if (path === '/') return ['/']; // Homepage case
                 
-                // Content for the list item (URL segment)
-                const content = `
-                    <div class="content flex items-start py-1 ${item._url ? 'text-blue-800 hover:text-blue-600 font-medium' : 'text-gray-900'}">
-                        ${hasChildren 
-                            ? `<span onclick="toggleNode(this)" class="toggle-btn text-indigo-500 transition duration-150 ease-in-out select-none text-xl leading-none pt-0.5 ${depth === 0 && !isExported ? 'rotate-90' : ''}">${depth === 0 && !isExported ? '&#9660;' : '&#9658;'}</span>`
-                            : `<span class="inline-block w-4 mr-2"></span>` // Spacer for alignment
-                        }
-                        
-                        ${item._url 
-                            ? `<a href="${item._url}" target="_blank" class="truncate flex-1" title="${item._url}">/${key}</a>`
-                            : `<span class="truncate flex-1">/${key}</span>`
-                        }
-                    </div>
-                `;
-
-                // Recursively generate HTML for children
-                const childrenHtml = generateHierarchyHtml(item.children, isExported, depth + 1);
+                path = path.replace(/^\/|\/$/g, ''); // Remove leading/trailing
+                if (path === '') return ['/']; // Safeguard for empty path
                 
-                // Determine if the child UL should be hidden initially (only if it has children and is not root/live view)
-                const childrenHiddenClass = hasChildren ? (depth === 0 && !isExported ? '' : 'hidden') : '';
+                return path.split('/').filter(segment => segment.length > 0);
+            } catch (e) {
+                console.warn("Invalid URL format:", url);
+                return []; // Skip invalid URLs
+            }
+        }
 
-                html += `<li class="relative ${liClass}">
-                            ${content}
-                            <ul class="${childrenHiddenClass}">
-                                ${childrenHtml}
-                            </ul>
-                        </li>`;
+        /**
+         * Builds a recursive tree structure from a flat list of URLs.
+         */
+        function buildHierarchyTree(urls) {
+            const firstUrl = urls[0];
+            let domain = 'Root';
+            let origin = '';
+            try {
+                const parsed = new URL(firstUrl);
+                domain = parsed.hostname; // e.g., 'www.hon.com'
+                origin = parsed.origin; // e.g., 'https://www.hon.com'
+            } catch(e) { /* default to 'Root' */ }
+
+            // The root node represents the domain itself
+            const root = { name: domain, children: {}, fullPath: origin || '/', count: 0, isLeaf: false };
+
+            urls.forEach(url => {
+                const segments = normalizeUrl(url);
+                if (segments.length === 0) return; // Skip invalid URL
+
+                let currentNode = root;
+                root.count++; // Increment root count for every valid URL
+                
+                // Handle homepage ('/') case
+                if (segments.length === 1 && segments[0] === '/') {
+                    root.isLeaf = true; // Mark root as a page itself
+                    // Update root name to be 'Home' if it's explicitly a leaf
+                    root.name = domain; 
+                    return; 
+                }
+
+                let currentPath = origin;
+
+                for (let i = 0; i < segments.length; i++) {
+                    const segment = segments[i];
+                    currentPath += '/' + segment; // Build up the path
+                    
+                    if (!currentNode.children[segment]) {
+                        currentNode.children[segment] = { 
+                            name: segment, 
+                            children: {}, 
+                            fullPath: currentPath, 
+                            count: 0,
+                            isLeaf: (i === segments.length - 1) // Is it the end of *this* URL path?
+                        };
+                    } else if (i === segments.length - 1) {
+                        // This path segment already existed, but it's also the end of *this* URL
+                        currentNode.children[segment].isLeaf = true;
+                    }
+
+                    currentNode = currentNode.children[segment];
+                    currentNode.count++; // Increment count for this node
+                }
             });
 
-            html += '</ul>';
-            return html;
+            // Convert children maps to sorted arrays
+            function sortAndClean(node) {
+                node.children = Object.values(node.children)
+                    .map(child => sortAndClean(child))
+                    // Sort: folders first, then leaves. Then by count, then by name.
+                    .sort((a, b) => {
+                        const aIsFolder = Object.keys(a.children).length > 0;
+                        const bIsFolder = Object.keys(b.children).length > 0;
+                        if (aIsFolder && !bIsFolder) return -1;
+                        if (!aIsFolder && bIsFolder) return 1;
+                        return b.count - a.count || a.name.localeCompare(b.name);
+                    });
+                return node;
+            }
+
+            return sortAndClean(root);
+        }
+        
+        // --- Rendering Logic ---
+
+        function renderTree(tree) {
+            pageTree.innerHTML = '';
+            
+            // The main node is the root (domain)
+            const rootHtml = createNodeElement(tree, 0);
+            pageTree.appendChild(rootHtml);
+            
+            // Expand the first level by default
+            toggleAllNodes(false); // Collapse all
+            const firstLevelToggle = rootHtml.querySelector('.page-item');
+            if (firstLevelToggle) {
+                firstLevelToggle.click(); // Expand root
+            }
+            
+            // Enable buttons after successful render
+            setButtonsDisabled(false);
         }
 
-        // --- Main Application Functions ---
-
-        let currentHierarchyTree = null;
-
-        /**
-         * Step 1: Reads XML, parses it, and displays the result.
-         */
-        function parseAndDisplay() {
-            const exportBtn = document.getElementById('exportBtn');
-            const exportWarning = document.getElementById('exportWarning');
-
-            exportBtn.disabled = true;
-            exportWarning.classList.add('hidden');
-
-            document.getElementById('hierarchyOutput').innerHTML = '<p class="text-indigo-500">Parsing...</p>';
-
-            const xmlInput = document.getElementById('xmlInput').value.trim();
-            if (!xmlInput) {
-                showStatus("Please paste XML sitemap data before parsing.", 'error');
-                document.getElementById('hierarchyOutput').innerHTML = '<p class="text-gray-400">Hierarchy will appear here after parsing.</p>';
-                return;
+        function createNodeElement(node, depth) {
+            const nodeElement = document.createElement('div');
+            // Base structural styles
+            if (depth > 0) {
+                nodeElement.classList.add('pl-4', 'border-l', 'border-gray-200', 'py-1');
             }
 
-            currentHierarchyTree = parseSitemap(xmlInput);
+            const isCollapsible = node.children && node.children.length > 0;
+            
+            // Item container (the clickable bar)
+            const itemContainer = document.createElement('div');
+            itemContainer.classList.add('page-item', 'flex', 'items-center', 'justify-between', 'rounded-lg', 'pr-2');
+            if (depth === 0) itemContainer.classList.add('bg-indigo-50', 'text-indigo-800', 'font-bold', 'shadow-sm');
+            if (isCollapsible) itemContainer.classList.add('cursor-pointer');
+            
+            // Indent based on depth
+            itemContainer.style.paddingLeft = `${depth * 0.75}rem`;
+            
+            // Chevron icon
+            const iconSvg = `<svg class="collapse-icon w-4 h-4 text-secondary mr-2 transition-transform ${isCollapsible ? '' : 'invisible'}" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"></path></svg>`;
+            
+            // Page name and count
+            const pageName = document.createElement('span');
+            pageName.classList.add('page-name', 'truncate', 'py-1.5');
+            pageName.innerHTML = `${iconSvg}
+                <span class="font-medium truncate">${node.name === '/' ? 'Home (Root)' : node.name}</span>
+                <span classs="ml-1 text-xs font-normal text-gray-400">${node.isLeaf && !isCollapsible ? ' (page)' : ''}</span>
+                <span class="ml-2 text-xs font-normal text-gray-500">(${node.count} sub-items)</span>`;
+            
+            // Path hint (e.g., /products/chairs)
+            const pathHint = document.createElement('span');
+            pathHint.classList.add('text-xs', 'text-gray-400', 'font-mono', 'hidden', 'sm:block', 'truncate', 'max-w-[40%]');
+            pathHint.textContent = node.fullPath;
 
-            if (currentHierarchyTree) {
-                const hierarchyHtml = generateHierarchyHtml(currentHierarchyTree, false); // false for live view
-                document.getElementById('hierarchyOutput').innerHTML = hierarchyHtml;
-                exportBtn.disabled = false;
-                exportWarning.classList.remove('hidden'); // Show warning when export is enabled
-                showStatus("Sitemap parsed successfully. Ready to export.", 'success');
-            } else {
-                 document.getElementById('hierarchyOutput').innerHTML = '<p class="text-red-500">Error during parsing. See status message for details.</p>';
+            itemContainer.appendChild(pageName);
+            itemContainer.appendChild(pathHint);
+
+            // Children container (hidden by default)
+            const childrenContainer = document.createElement('div');
+            childrenContainer.classList.add('children-container', 'space-y-1', 'mt-1', 'pl-4', 'hidden'); 
+
+            if (isCollapsible) {
+                itemContainer.addEventListener('click', () => {
+                    childrenContainer.classList.toggle('hidden');
+                    itemContainer.classList.toggle('collapsed');
+                });
             }
+
+            if (node.children) {
+                node.children.forEach(child => {
+                    childrenContainer.appendChild(createNodeElement(child, depth + 1));
+                });
+            }
+
+            nodeElement.appendChild(itemContainer);
+            nodeElement.appendChild(childrenContainer);
+
+            return nodeElement;
         }
 
-        /**
-         * Step 2: Generates a complete, self-contained HTML file for download.
-         */
-        function exportSitemapHtml() {
-            if (!currentHierarchyTree) {
-                showStatus("Please parse the XML data first.", 'error');
-                return;
-            }
-
-            // 1. Generate the inner hierarchy HTML (collapsed by default)
-            const hierarchyHtmlContent = generateHierarchyHtml(currentHierarchyTree, true);
-
-            // 2. Define the JavaScript function needed for the export file
-            const exportJs = `
-                function toggleNode(button) {
-                    const li = button.closest('li');
-                    const childrenUl = li.querySelector(':scope > ul');
-                    if (childrenUl) {
-                        if (childrenUl.classList.contains('hidden')) {
-                            childrenUl.classList.remove('hidden');
-                            li.classList.add('expanded');
-                            button.innerHTML = '&#9660;'; 
-                        } else {
-                            childrenUl.classList.add('hidden');
-                            li.classList.remove('expanded');
-                            button.innerHTML = '&#9658;'; 
-                        }
-                    }
+        // --- Tree Toggle Logic ---
+        function toggleAllNodes(expand) {
+            const childContainers = pageTree.querySelectorAll('.children-container');
+            const itemContainers = pageTree.querySelectorAll('.page-item');
+            
+            childContainers.forEach(container => {
+                container.classList.toggle('hidden', !expand);
+            });
+            
+            itemContainers.forEach(item => {
+                // Only toggle collapsible items
+                if (item.classList.contains('cursor-pointer')) {
+                     item.classList.toggle('collapsed', !expand);
                 }
+            });
+        }
+
+        // --- Robust HTML Export Logic ---
+        function exportInteractiveHtml() {
+            if (pageTree.children.length === 0 || pageTree.querySelector('.text-secondary')) {
+                showModal('Error', 'Please parse a sitemap successfully before attempting to export.', 'text-red-600');
+                return;
+            }
+            
+            setStatus('Generating interactive HTML file...', 'bg-indigo-100 text-indigo-800');
+
+            // Get the dynamic tree content
+            const treeContent = pageTree.innerHTML;
+            
+            // Define styles necessary for the exported HTML
+            const exportedStyles = `
+                <style>
+                    body { font-family: Inter, sans-serif; margin: 0; background-color: #f9fafb; }
+                    .container { max-width: 1000px; margin: 20px auto; padding: 20px; background-color: #fff; border-radius: 12px; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+                    .header { color: #1D4ED8; font-weight: 800; font-size: 1.5rem; margin-bottom: 10px; }
+                    .hierarchy-container { padding: 16px; background-color: white; border: 1px solid #e5e7eb; border-radius: 8px; }
+                    
+                    /* Node styling */
+                    .page-item {
+                        display: flex;
+                        align-items: center;
+                        justify-content: space-between;
+                        padding-right: 8px;
+                        border-radius: 8px;
+                        transition: all 0.15s ease-in-out;
+                        user-select: none;
+                    }
+                    .page-item:hover { background-color: #f3f4f6; }
+                    .page-item.cursor-pointer { cursor: pointer; }
+                    
+                    .page-name { display: flex; align-items: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; padding-top: 6px; padding-bottom: 6px; }
+                    .collapse-icon { width: 1rem; height: 1rem; color: #6B7280; margin-right: 8px; transition: transform 0.2s; flex-shrink: 0; }
+                    .invisible { visibility: hidden; }
+                    .page-item.collapsed .collapse-icon { transform: rotate(-90deg); }
+                    
+                    /* Hierarchy indentation and lines */
+                    .pl-4 { padding-left: 1rem; }
+                    .border-l { border-left: 1px solid #e5e7eb; }
+                    .py-1 { padding-top: 0.25rem; padding-bottom: 0.25rem; }
+                    .mt-1 { margin-top: 0.25rem; }
+                    .space-y-1 > div { margin-top: 0.25rem; margin-bottom: 0.25rem; }
+                    .children-container.hidden { display: none; }
+
+                    /* Colors and text styles */
+                    .bg-indigo-50 { background-color: #eef2ff; }
+                    .text-indigo-800 { color: #3730a3; }
+                    .font-bold { font-weight: 700; }
+                    .font-medium { font-weight: 500; }
+                    .truncate { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+                    
+                    .text-gray-400 { color: #9ca3af; }
+                    .text-gray-500 { color: #6b7280; }
+                    .font-mono { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; }
+                    .text-xs { font-size: 0.75rem; line-height: 1rem; }
+                    .ml-1 { margin-left: 0.25rem; }
+                    .ml-2 { margin-left: 0.5rem; }
+                    
+                    .hidden { display: none; }
+                    .sm\:block { display: block; } /* Simplify for export */
+                    .max-w-\\[40\\%\\] { max-width: 40%; }
+                    
+                    /* Export-specific controls */
+                    .controls { margin-bottom: 1rem; display: flex; gap: 0.5rem; }
+                    .controls button {
+                        font-family: Inter, sans-serif;
+                        background-color: #4B5563;
+                        color: white;
+                        font-size: 0.875rem;
+                        font-weight: 600;
+                        padding: 6px 12px;
+                        border: none;
+                        border-radius: 8px;
+                        box-shadow: 0 1px 2px rgba(0,0,0,0.05);
+                        cursor: pointer;
+                        transition: background-color 0.2s;
+                    }
+                    .controls button:hover { background-color: #374151; }
+                </style>
+            `;
+            
+            // Define JS for the exported file
+            const exportedJs = `
+                <script>
+                    function toggleAllNodes(expand) {
+                        const childContainers = document.querySelectorAll('.children-container');
+                        const itemContainers = document.querySelectorAll('.page-item');
+                        
+                        childContainers.forEach(container => {
+                            container.classList.toggle('hidden', !expand);
+                        });
+                        
+                        itemContainers.forEach(item => {
+                            if (item.classList.contains('cursor-pointer')) {
+                                item.classList.toggle('collapsed', !expand);
+                            }
+                        });
+                    }
+
+                    document.addEventListener('DOMContentLoaded', () => {
+                        // Add click listeners to all collapsible items
+                        const collapsibleItems = document.querySelectorAll('.page-item.cursor-pointer');
+                        collapsibleItems.forEach(item => {
+                            item.addEventListener('click', (e) => {
+                                // Find the children container for this item
+                                const childrenContainer = item.nextElementSibling;
+                                if (childrenContainer && childrenContainer.classList.contains('children-container')) {
+                                    childrenContainer.classList.toggle('hidden');
+                                    item.classList.toggle('collapsed');
+                                }
+                            });
+                        });
+                        
+                        // Hook up control buttons
+                        document.getElementById('exportExpand').addEventListener('click', () => toggleAllNodes(true));
+                        document.getElementById('exportCollapse').addEventListener('click', () => toggleAllNodes(false));
+                        
+                        // Expand first level by default
+                        const firstLevelToggle = document.querySelector('.hierarchy-container > div > .page-item');
+                        if (firstLevelToggle) {
+                            firstLevelToggle.click();
+                        }
+                    });
+                <\/script>
             `;
 
-            // 3. Define the custom CSS needed for the export file
-            const exportCss = `
-                .hierarchy-container { font-family: 'Inter', sans-serif; }
-                .tree ul { list-style-type: none; padding-left: 1.5rem; margin-top: 0.25rem; border-left: 1px dashed #e5e7eb; }
-                .tree > ul { padding-left: 0; border-left: none; }
-                .tree li { padding-left: 0.5rem; position: relative; }
-                .tree li .toggle-btn { cursor: pointer; margin-right: 0.5rem; transition: transform 0.2s; }
-                .tree li.expanded > .content > .toggle-btn { transform: rotate(90deg); }
-                .bg-indigo-50 { background-color: #f0f4ff; }
-                .text-indigo-800 { color: #3730a3; }
-                .shadow-2xl { box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); }
-                .rounded-xl { border-radius: 0.75rem; }
-            `;
-
-
-            // 4. Construct the full, self-contained exported HTML file content
-            const exportedHtml = `
-<!DOCTYPE html>
+            // Construct the full HTML file content
+            const htmlContent = `<!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Sitemap Hierarchy Export</title>
-    <script src="https://cdn.tailwindcss.com"></script>
-    <style>${exportCss}</style>
-    <script>${exportJs}</script>
+    <title>Website Hierarchy Export</title>
+    ${exportedStyles}
 </head>
-<body class="bg-gray-100 p-8 min-h-screen font-sans">
-    <div class="max-w-4xl mx-auto bg-white p-8 rounded-xl shadow-2xl">
-        <h1 class="text-3xl font-extrabold text-indigo-800 mb-6 border-b pb-2">Website URL Hierarchy</h1>
-        <div id="hierarchyContent" class="hierarchy-container tree">
-            ${hierarchyHtmlContent}
+<body>
+    <div class="container">
+        <h1 class="header">Website Page Hierarchy Export</h1>
+        <p style="color: #6B7280; margin-bottom: 20px;">Generated from the Sitemap Parser tool. This is an interactive hierarchy.</p>
+        
+        <div class="controls">
+            <button id="exportExpand">Expand All</button>
+            <button id="exportCollapse">Collapse All</button>
         </div>
-        <p class="mt-8 text-sm text-gray-500">Generated by the Sitemap Hierarchy Tool.</p>
+        
+        <div class="hierarchy-container">
+            ${treeContent}
+        </div>
     </div>
+    ${exportedJs}
 </body>
-</html>
-            `;
+</html>`;
 
-            // 5. Download the file
-            // NOTE: This feature is often blocked by iframe security policies (like the one used in the Canvas preview).
-            // It will work when running the file directly in a browser.
+            // Create a Blob and trigger download
             try {
-                const blob = new Blob([exportedHtml], { type: 'text/html' });
+                const blob = new Blob([htmlContent], { type: 'text/html' });
                 const url = URL.createObjectURL(blob);
                 const a = document.createElement('a');
                 a.href = url;
-                a.download = 'sitemap-hierarchy-export.html';
+                a.download = 'website_hierarchy_export.html';
                 document.body.appendChild(a);
                 a.click();
                 document.body.removeChild(a);
                 URL.revokeObjectURL(url);
-                showStatus("HTML file export command executed. Check your downloads folder (may be blocked in this preview).", 'success');
-            } catch (e) {
-                console.error("Download failed, likely due to iframe security:", e);
-                showStatus("Export failed: Download functionality is blocked by security policies in this preview environment. The code is correct, but you must run it in a separate tab to download the file.", 'error');
+
+                setStatus('Interactive HTML file exported successfully!', 'bg-green-100 text-green-800');
+            } catch (error) {
+                console.error("HTML Export Error:", error);
+                setStatus('HTML file export failed.', 'bg-red-100 text-red-800');
+                showModal('Export Error', `Failed to generate HTML file: ${error.message}`, 'text-red-600');
             }
         }
 
-        // Initialize with a placeholder or example XML for quick testing
-        window.onload = () => {
-             const exampleXml = `
-                <?xml version="1.0" encoding="UTF-8"?>
-                <urlset xmlns="http://www.sitemaps.org/schemas/sitemap/0.9">
-                    <url><loc>https://www.example.com/</loc></url>
-                    <url><loc>https://www.example.com/about</loc></url>
-                    <url><loc>https://www.example.com/products/laptops</loc></url>
-                    <url><loc>https://www.example.com/products/monitors/ultrawide</loc></url>
-                    <url><loc>https://www.example.com/products/monitors/gaming</loc></url>
-                    <url><loc>https://www.example.com/blog/2023/q4-review</loc></url>
-                    <url><loc>https://www.example.com/blog/2024/new-trends</loc></url>
-                </urlset>
-            `;
-            document.getElementById('xmlInput').value = exampleXml;
-            parseAndDisplay();
-        };
+        // --- Robust PDF Generation Logic ---
+        async function generatePdf() {
+            if (pageTree.children.length === 0 || pageTree.querySelector('.text-secondary')) {
+                showModal('Error', 'Please parse a sitemap successfully before attempting to download the PDF.', 'text-red-600');
+                return;
+            }
+
+            setStatus('Generating PDF (this may take a moment)...', 'bg-purple-100 text-purple-800');
+            setButtonsDisabled(true);
+            pdfLoading.classList.remove('hidden');
+
+            // 1. Store original styles
+            const originalMaxHeight = pageTree.style.maxHeight;
+            const originalOverflowY = pageTree.style.overflowY;
+
+            // 2. Expand all nodes for full capture
+            toggleAllNodes(true);
+            
+            // 3. Temporarily modify styles for html2canvas to capture full content
+            pageTree.style.maxHeight = 'none';
+            pageTree.style.overflowY = 'visible';
+            // Ensure the container itself doesn't have a new scrollbar
+            pageTree.style.height = 'auto'; 
+
+            try {
+                // Use the window.jsPDF and window.html2canvas provided by CDNs
+                const { jsPDF } = window.jspdf;
+                
+                // 4. Run html2canvas on the pageTree itself
+                const canvas = await html2canvas(pageTree, {
+                    scale: 2, // Higher scale for better resolution
+                    useCORS: true,
+                    width: pageTree.scrollWidth, // Capture full width
+                    height: pageTree.scrollHeight // Capture full height
+                });
+
+                const imgData = canvas.toDataURL('image/png');
+                const pdf = new jsPDF('p', 'mm', 'a4');
+                
+                const pdfWidth = pdf.internal.pageSize.getWidth();
+                const pdfHeight = pdf.internal.pageSize.getHeight();
+                
+                const canvasWidth = canvas.width;
+                const canvasHeight = canvas.height;
+
+                // Calculate ratio to fit width (with a small margin)
+                const margin = 10;
+                const usablePdfWidth = pdfWidth - (margin * 2);
+                const ratio = usablePdfWidth / canvasWidth;
+                const imgHeight = canvasHeight * ratio;
+                const imgWidth = canvasWidth * ratio;
+                
+                let heightLeft = imgHeight;
+                let position = margin; // Start with top margin
+                
+                // Add first page
+                pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
+                heightLeft -= (pdfHeight - (margin * 2)); // Subtract usable page height
+
+                // Handle content spanning multiple pages
+                while (heightLeft > 0) {
+                    position = position - pdfHeight + (margin * 2); // Move up by one page height (adjusted for margins)
+                    pdf.addPage();
+                    pdf.addImage(imgData, 'PNG', margin, position, imgWidth, imgHeight);
+                    heightLeft -= (pdfHeight - (margin * 2));
+                }
+
+                pdf.save('website_hierarchy.pdf');
+                setStatus('PDF downloaded successfully!', 'bg-green-100 text-green-800');
+                
+            } catch (error) {
+                console.error("PDF Generation Error:", error);
+                setStatus('PDF generation failed.', 'bg-red-100 text-red-800');
+                showModal('PDF Error', 'Failed to generate PDF. Check console for details.', 'text-red-600');
+            } finally {
+                // 5. Restore original styles
+                pageTree.style.maxHeight = originalMaxHeight;
+                pageTree.style.overflowY = originalOverflowY;
+                pageTree.style.height = ''; // Reset auto height
+
+                // 6. Restore view (e.g., collapse all)
+                toggleAllNodes(false);
+                const firstLevelToggle = pageTree.querySelector('.page-item');
+                if (firstLevelToggle) firstLevelToggle.click(); // Re-expand root
+
+                // 7. Re-enable buttons and hide loading
+                setButtonsDisabled(false);
+                pdfLoading.classList.add('hidden');
+            }
+        }
 
     </script>
 </body>
