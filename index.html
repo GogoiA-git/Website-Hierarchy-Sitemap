@@ -348,14 +348,30 @@
 
             function generateList(node, level) {
                 let nodeName = node.name === '/' ? 'Home (Root)' : node.name;
-                
-                // Use a standard UL/LI structure for the export
-                listHtml += `<li><strong style="margin-right: 10px;">${nodeName}</strong>`;
-                listHtml += `<a href="${node.fullPath}" target="_blank" style="color: #1D4ED8; text-decoration: none;">(${node.fullPath})</a>`;
-                listHtml += `<span style="color: #6B7280; margin-left: 10px;">[${node.count} subpages]</span>`;
+                const hasChildren = node.children && node.children.length > 0;
+                const isCollapsed = hasChildren && level > 0 ? ' style="display:none;"' : '';
 
-                if (node.children && node.children.length > 0) {
-                    listHtml += `<ul style="margin-left: 20px; margin-top: 5px; padding-left: 0;">`;
+                // List Item (Clickable part)
+                listHtml += `<li class="hierarchy-node">`;
+                listHtml += `<div class="node-header${hasChildren ? ' clickable collapsed' : ''}" onclick="toggleChildren(this)">`;
+                
+                // Toggle Icon
+                if (hasChildren) {
+                     listHtml += `<svg class="toggle-icon" viewBox="0 0 24 24"><path d="M19 9l-7 7-7-7"></path></svg>`;
+                }
+                
+                // Name and URL
+                listHtml += `<strong class="node-name">${nodeName}</strong>`;
+                listHtml += `<span class="node-url-count">`;
+                listHtml += `<a href="${node.fullPath}" target="_blank">(${node.fullPath})</a>`;
+                listHtml += `<span>[${node.count} subpages]</span>`;
+                listHtml += `</span>`;
+                listHtml += `</div>`;
+
+
+                // Children Container (The collapsible part)
+                if (hasChildren) {
+                    listHtml += `<ul class="children-list"${isCollapsed}>`;
                     node.children.forEach(child => {
                         generateList(child, level + 1);
                     });
@@ -365,15 +381,18 @@
             }
 
             // Create a fake root node for the domain name display in the export
+            const rootDomain = domainInput.value.trim().replace(/^https?:\/\//, '').replace(/\/$/, '');
+            const rootPathMatch = xmlContentArea.value.split('\n')[0].match(/<loc>(.*?)<\/loc>/);
+            const rootPath = rootPathMatch ? new URL(rootPathMatch[1]).origin : `http://${rootDomain}`;
+
             const exportRoot = {
-                name: domain,
+                name: rootDomain || 'Root Domain',
                 children: tree.children,
-                fullPath: new URL(xmlContentArea.value.split('\n')[0].match(/<loc>(.*?)<\/loc>/)?.[1] || 'http://placeholder.com').origin || 'http://example.com',
+                fullPath: rootPath,
                 count: tree.count
             };
             
-            // Start the list generation, wrapping the children in an initial UL
-            listHtml += `<ul style="list-style: none; padding-left: 0;">`;
+            listHtml += `<ul class="hierarchy-root-list">`;
             generateList(exportRoot, 0);
             listHtml += `</ul>`;
 
@@ -388,10 +407,55 @@
         body { font-family: Arial, sans-serif; line-height: 1.6; padding: 20px; background-color: #f8f8f8; }
         .container { max-width: 900px; margin: auto; background: #fff; padding: 25px; border-radius: 8px; box-shadow: 0 4px 6px rgba(0,0,0,0.1); }
         h1 { color: #1D4ED8; border-bottom: 2px solid #eee; padding-bottom: 10px; }
-        ul { list-style: none; padding-left: 0; }
-        ul li { margin: 5px 0; }
-        ul ul { border-left: 1px solid #ccc; padding-left: 15px; margin-left: 10px; }
+        hr { margin: 15px 0; border: 0; border-top: 1px solid #eee; }
+
+        .hierarchy-root-list { list-style: none; padding-left: 0; }
+        .hierarchy-node { margin: 5px 0; }
+        .children-list { list-style: none; padding-left: 0; margin-left: 20px; border-left: 1px solid #ccc; }
+        .children-list li { padding-left: 10px; }
+
+        .node-header { 
+            padding: 5px 8px; 
+            margin-bottom: 2px; 
+            display: flex; 
+            align-items: center; 
+            border-radius: 4px; 
+            transition: background-color 0.1s; 
+        }
+        .node-header:hover { background-color: #f3f4f6; }
+        .node-header.clickable { cursor: pointer; }
+        
+        .node-header .node-name { margin-right: 10px; font-weight: bold; color: #333; }
+        
+        .node-url-count a { color: #1D4ED8; text-decoration: none; font-size: 0.9em; margin-right: 10px; }
+        .node-url-count span { color: #6B7280; font-size: 0.8em; }
+
+        .toggle-icon {
+            width: 14px; 
+            height: 14px; 
+            fill: none; 
+            stroke: #6B7280; 
+            stroke-width: 2; 
+            margin-right: 5px; 
+            transition: transform 0.2s;
+        }
+        .node-header.collapsed .toggle-icon { transform: rotate(-90deg); }
     </style>
+    <script>
+        function toggleChildren(headerElement) {
+            const isClickable = headerElement.classList.contains('clickable');
+            if (!isClickable) return;
+
+            const parentLi = headerElement.closest('.hierarchy-node');
+            const childrenUl = parentLi.querySelector('.children-list');
+            
+            if (childrenUl) {
+                const isHidden = childrenUl.style.display === 'none';
+                childrenUl.style.display = isHidden ? '' : 'none';
+                headerElement.classList.toggle('collapsed', !isHidden);
+            }
+        }
+    </script>
 </head>
 <body>
     <div class="container">
