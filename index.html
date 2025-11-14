@@ -505,7 +505,7 @@
 
         // --- Robust HTML Export Logic ---
         function exportInteractiveHtml() {
-            if (pageTree.children.length === 0 || pageTree.querySelector('.text-secondary')) {
+            if (pageTree.children.length === 0 || pageTree.querySelector('p.text-secondary')) {
                 showModal('Error', 'Please parse a sitemap successfully before attempting to export.', 'text-red-600');
                 return;
             }
@@ -680,7 +680,7 @@
 
         // --- Robust PDF Generation Logic ---
         async function generatePdf() {
-            if (pageTree.children.length === 0 || pageTree.querySelector('.text-secondary')) {
+            if (pageTree.children.length === 0 || pageTree.querySelector('p.text-secondary')) {
                 showModal('Error', 'Please parse a sitemap successfully before attempting to download the PDF.', 'text-red-600');
                 return;
             }
